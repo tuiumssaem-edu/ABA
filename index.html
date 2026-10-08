@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#3B5BDB">
+<title>ABA 행동 관찰 기록기</title>
+
+<!-- 라이브러리 안내 문구 정리: 오류가 아닌 정보성 메시지만 숨깁니다 -->
+<script>
+  // Tone.js가 로드될 때 출력하는 버전 배너를 끕니다 (Tone.js 공식 옵션)
+  window.TONE_SILENCE_LOGGING = true;
+  // Tailwind Play CDN의 "production 사용 비권장" 안내 1건만 걸러내고, 다른 경고는 그대로 표시합니다
+  (function () {
+    var originalWarn = console.warn;
+    console.warn = function () {
+      var first = arguments[0];
+      if (typeof first === 'string' && first.indexOf('cdn.tailwindcss.com should not be used in production') !== -1) return;
+      return originalWarn.apply(console, arguments);
+    };
+  })();
+</script>
+<!-- 라이브러리: Tailwind CSS(Play CDN), Chart.js, Tone.js -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: '#1E2A3B',
+          brand: '#3B5BDB',
+          board: '#F3F7FF',
+          line: '#DCE4F2',
+          mild: '#22C55E',
+          mid: '#FB8C24',
+          strong: '#F43F5E'
+        },
+        fontFamily: {
+          sans: ['"IBM Plex Sans KR"', '-apple-system', 'BlinkMacSystemFont', '"Apple SD Gothic Neo"', '"Malgun Gothic"', 'sans-serif']
+        }
+      }
+    }
+  };
+</script>
+
+<style>
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: #F3F7FF;
+    color: #1E2A3B;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  button, select, input, a { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 3px solid #2F6FEB; outline-offset: 2px; }
+
+  /* 드롭다운 화살표 */
+  .select {
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%231E2A3B' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 14px center; padding-right: 44px;
+  }
+  .select:disabled { opacity: .55; }
+
+  /* 기록 버튼 */
+  .rec-btn { user-select: none; -webkit-user-select: none; transition: transform .08s ease, filter .15s ease; position: relative; overflow: hidden; }
+  .rec-btn:active { transform: scale(.965); }
+  .rec-btn.is-locked { filter: grayscale(.85) brightness(1.08); }
+  .rec-btn .pulse { position:absolute; inset:0; background: rgba(255,255,255,.55); opacity:0; pointer-events:none; }
+  .rec-btn.flash .pulse { animation: pulse .45s ease-out; }
+  @keyframes pulse { 0% { opacity:.9 } 100% { opacity:0 } }
+
+  /* 모달 */
+  .modal { display: none; }
+  .modal.open { display: flex; }
+  .modal-panel { animation: rise .18s ease-out; }
+  @keyframes rise { from { transform: translateY(16px); opacity: 0 } to { transform: none; opacity: 1 } }
+
+  /* 토스트 */
+  .toast { animation: toastIn .18s ease-out; }
+  .toast.out { animation: toastOut .2s ease-in forwards; }
+  @keyframes toastIn { from { transform: translateY(14px); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes toastOut { to { transform: translateY(10px); opacity: 0 } }
+
+  .tabular { font-variant-numeric: tabular-nums; }
+  pre.code { white-space: pre; tab-size: 2; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+
+<body class="font-sans antialiased min-h-screen">
+
+<!-- ================= 헤더 ================= -->
+<header class="sticky z-30 bg-brand text-white" style="top:0; padding-top:env(safe-area-inset-top,0px);">
+  <div class="max-w-5xl mx-auto px-4 h-16 flex items-center gap-3">
+    <div class="flex-1 min-w-0">
+      <h1 class="text-lg font-bold leading-tight truncate">행동 관찰 기록기</h1>
+      <p id="syncBadge" class="text-xs text-blue-100 truncate"></p>
+    </div>
+    <button id="soundBtn" class="w-11 h-11 rounded-xl bg-white/10 hover:bg-white/20 grid place-items-center text-xl" aria-label="효과음 켜기/끄기">🔊</button>
+    <button id="guideBtn" class="h-11 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold whitespace-nowrap">시트 연동</button>
+    <button id="settingsBtn" class="w-11 h-11 rounded-xl bg-white text-brand grid place-items-center" aria-label="설정 열기">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="max-w-5xl mx-auto px-4 py-5 space-y-6">
+
+  <!-- ================= 관찰 대상 선택 + 기록 ================= -->
+  <section class="bg-white rounded-3xl border border-line p-4 sm:p-6">
+    <div class="grid sm:grid-cols-2 gap-3">
+      <label class="block">
+        <span class="block text-sm font-semibold text-slate-600 mb-1.5">학생</span>
+        <select id="studentSelect" class="select w-full h-14 rounded-2xl border-2 border-line bg-white px-4 text-lg font-semibold"></select>
+      </label>
+      <label class="block">
+        <span class="block text-sm font-semibold text-slate-600 mb-1.5">표적행동</span>
+        <select id="behaviorSelect" class="select w-full h-14 rounded-2xl border-2 border-line bg-white px-4 text-lg font-semibold"></select>
+      </label>
+    </div>
+
+    <div class="grid grid-cols-3 gap-3 sm:gap-4 mt-5">
+      <button class="rec-btn rounded-3xl bg-mild text-white h-40 sm:h-52 flex flex-col items-center justify-center shadow-[0_6px_0_#15A34A]" data-level="1" aria-label="약, 1점 기록">
+        <span class="pulse"></span>
+        <span class="text-6xl sm:text-7xl font-bold leading-none tabular">1</span>
+        <span class="text-xl sm:text-2xl font-bold mt-2">약</span>
+        <span class="text-xs sm:text-sm opacity-90 mt-1 tabular" data-today="1">오늘 0회</span>
+      </button>
+      <button class="rec-btn rounded-3xl bg-mid text-white h-40 sm:h-52 flex flex-col items-center justify-center shadow-[0_6px_0_#D9700F]" data-level="2" aria-label="중, 2점 기록">
+        <span class="pulse"></span>
+        <span class="text-6xl sm:text-7xl font-bold leading-none tabular">2</span>
+        <span class="text-xl sm:text-2xl font-bold mt-2">중</span>
+        <span class="text-xs sm:text-sm opacity-90 mt-1 tabular" data-today="2">오늘 0회</span>
+      </button>
+      <button class="rec-btn rounded-3xl bg-strong text-white h-40 sm:h-52 flex flex-col items-center justify-center shadow-[0_6px_0_#C81E45]" data-level="3" aria-label="강, 3점 기록">
+        <span class="pulse"></span>
+        <span class="text-6xl sm:text-7xl font-bold leading-none tabular">3</span>
+        <span class="text-xl sm:text-2xl font-bold mt-2">강</span>
+        <span class="text-xs sm:text-sm opacity-90 mt-1 tabular" data-today="3">오늘 0회</span>
+      </button>
+    </div>
+
+    <p id="recordHint" class="mt-4 text-sm text-slate-500 text-center"></p>
+  </section>
+
+  <!-- ================= 통계 ================= -->
+  <section class="space-y-3">
+    <div class="flex flex-wrap items-end gap-3">
+      <div class="flex-1 min-w-[10rem]">
+        <h2 class="text-xl font-bold">통계</h2>
+        <p id="statsSummary" class="text-sm text-slate-500 tabular"></p>
+      </div>
+      <select id="statsStudent" class="select h-11 rounded-xl border-2 border-line bg-white px-3 text-sm font-semibold"></select>
+      <select id="statsPeriod" class="select h-11 rounded-xl border-2 border-line bg-white px-3 text-sm font-semibold">
+        <option value="today">오늘</option>
+        <option value="7d">최근 7일</option>
+        <option value="all" selected>전체 기간</option>
+      </select>
+    </div>
+
+    <div class="grid lg:grid-cols-3 gap-4">
+      <div class="lg:col-span-2 bg-white rounded-3xl border border-line p-4 sm:p-5">
+        <h3 class="font-bold mb-3">시간대별 발생 빈도</h3>
+        <div class="relative h-64"><canvas id="hourChart" aria-label="시간대별 발생 빈도 막대그래프"></canvas></div>
+      </div>
+      <div class="bg-white rounded-3xl border border-line p-4 sm:p-5">
+        <h3 class="font-bold mb-3">강도 비율</h3>
+        <div class="relative h-48">
+          <canvas id="intensityChart" aria-label="강도 비율 도넛 차트"></canvas>
+          <div class="absolute inset-0 grid place-items-center pointer-events-none">
+            <div class="text-center">
+              <div id="donutTotal" class="text-3xl font-bold tabular">0</div>
+              <div class="text-xs text-slate-500">총 기록</div>
+            </div>
+          </div>
+        </div>
+        <div id="intensityBadges" class="grid grid-cols-3 gap-2 mt-4"></div>
+      </div>
+    </div>
+    <p id="chartError" class="hidden text-sm text-strong"></p>
+  </section>
+
+  <!-- ================= 관찰 로그 ================= -->
+  <section class="bg-white rounded-3xl border border-line p-4 sm:p-5">
+    <div class="flex flex-wrap items-center gap-3 mb-3">
+      <div class="flex-1 min-w-[8rem]">
+        <h2 class="text-xl font-bold">관찰 로그</h2>
+        <p id="logCount" class="text-sm text-slate-500 tabular"></p>
+      </div>
+      <button id="csvBtn" class="h-11 px-4 rounded-xl bg-brand text-white text-sm font-semibold">CSV 내려받기</button>
+    </div>
+    <input id="searchInput" type="search" placeholder="학생, 표적행동, 날짜, 강도(약·중·강)로 검색" class="w-full h-12 rounded-xl border-2 border-line px-4 mb-3">
+    <div class="overflow-x-auto -mx-4 sm:mx-0">
+      <table class="w-full text-sm min-w-[560px]">
+        <thead>
+          <tr class="text-left text-slate-500 border-b-2 border-line">
+            <th class="py-2 px-3 font-semibold">시각</th>
+            <th class="py-2 px-3 font-semibold">학생</th>
+            <th class="py-2 px-3 font-semibold">표적행동</th>
+            <th class="py-2 px-3 font-semibold">강도</th>
+            <th class="py-2 px-3 font-semibold">시트</th>
+            <th class="py-2 px-3"></th>
+          </tr>
+        </thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="text-center text-xs text-slate-400 pb-4">기록은 이 기기의 브라우저에 저장됩니다. 정기적으로 CSV를 내려받아 보관해 주세요.</p>
+</main>
+
+<!-- ================= 토스트 영역 ================= -->
+<div id="toastArea" class="fixed inset-x-0 z-[70] flex flex-col items-center gap-2 px-4 pointer-events-none" style="bottom:calc(16px + env(safe-area-inset-bottom,0px));"></div>
+
+<!-- ================= 설정 모달 ================= -->
+<div id="settingsModal" class="modal fixed inset-0 z-50 bg-black/50 items-end sm:items-center justify-center" data-backdrop>
+  <div class="modal-panel bg-white w-full sm:max-w-2xl max-h-[92vh] rounded-t-3xl sm:rounded-3xl flex flex-col">
+    <div class="flex items-center gap-3 px-5 h-16 border-b border-line shrink-0">
+      <h2 class="text-lg font-bold flex-1">설정</h2>
+      <button class="w-11 h-11 rounded-xl hover:bg-slate-100 text-2xl" data-close="settingsModal" aria-label="닫기">×</button>
+    </div>
+    <div class="overflow-y-auto p-5 space-y-8" style="padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));">
+
+      <section>
+        <h3 class="font-bold text-base mb-1">학생과 표적행동</h3>
+        <p class="text-sm text-slate-500 mb-3">학생마다 여러 표적행동을 등록할 수 있습니다. 변경 사항은 바로 메인 화면에 반영됩니다.</p>
+        <div class="flex gap-2 mb-4">
+          <input id="newStudentInput" maxlength="30" placeholder="학생 이름" class="flex-1 min-w-0 h-12 rounded-xl border-2 border-line px-4">
+          <button id="addStudentBtn" class="h-12 px-5 rounded-xl bg-brand text-white font-semibold whitespace-nowrap">학생 추가</button>
+        </div>
+        <div id="studentList" class="space-y-3"></div>
+      </section>
+
+      <section>
+        <h3 class="font-bold text-base mb-1">구글 스프레드시트 연동</h3>
+        <p class="text-sm text-slate-500 mb-3">Apps Script 웹 앱 URL을 저장하면 기록할 때마다 시트로 자동 전송됩니다. 설정 방법은 <button class="underline font-semibold text-brand" id="openGuideFromSettings">연동 가이드</button>를 참고하세요.</p>
+        <input id="gasUrlInput" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" class="w-full h-12 rounded-xl border-2 border-line px-4 mb-2 text-sm">
+        <div class="flex flex-wrap gap-2">
+          <button id="saveGasBtn" class="h-11 px-4 rounded-xl bg-brand text-white text-sm font-semibold">URL 저장</button>
+          <button id="testGasBtn" class="h-11 px-4 rounded-xl border-2 border-line text-sm font-semibold">연결 확인</button>
+          <button id="clearGasBtn" class="h-11 px-4 rounded-xl border-2 border-line text-sm font-semibold">연동 해제</button>
+          <button id="retryBtn" class="h-11 px-4 rounded-xl border-2 border-mid text-mid text-sm font-semibold hidden"></button>
+        </div>
+      </section>
+
+      <section class="border-t border-line pt-6">
+        <h3 class="font-bold text-base mb-1 text-strong">기록 초기화</h3>
+        <p class="text-sm text-slate-500 mb-3">이 기기에 저장된 관찰 기록을 모두 지웁니다. 구글 시트의 데이터는 지워지지 않습니다.</p>
+        <button id="clearLogsBtn" class="h-11 px-4 rounded-xl bg-strong text-white text-sm font-semibold">모든 관찰 기록 삭제</button>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ================= GAS 가이드 모달 ================= -->
+<div id="guideModal" class="modal fixed inset-0 z-50 bg-black/50 items-end sm:items-center justify-center" data-backdrop>
+  <div class="modal-panel bg-white w-full sm:max-w-3xl max-h-[92vh] rounded-t-3xl sm:rounded-3xl flex flex-col">
+    <div class="flex items-center gap-3 px-5 h-16 border-b border-line shrink-0">
+      <h2 class="text-lg font-bold flex-1">구글 시트 연동 가이드</h2>
+      <button class="w-11 h-11 rounded-xl hover:bg-slate-100 text-2xl" data-close="guideModal" aria-label="닫기">×</button>
+    </div>
+    <div class="overflow-y-auto p-5 space-y-5" style="padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));">
+      <ol class="space-y-3 text-sm leading-relaxed">
+        <li class="flex gap-3"><span class="shrink-0 w-7 h-7 rounded-full bg-brand text-white grid place-items-center font-bold">1</span><span>구글 스프레드시트를 새로 만들고 메뉴에서 <b>확장 프로그램 → Apps Script</b>를 엽니다.</span></li>
+        <li class="flex gap-3"><span class="shrink-0 w-7 h-7 rounded-full bg-brand text-white grid place-items-center font-bold">2</span><span>편집기의 기존 코드를 모두 지우고 아래 코드를 붙여넣은 뒤 저장합니다.</span></li>
+        <li class="flex gap-3"><span class="shrink-0 w-7 h-7 rounded-full bg-brand text-white grid place-items-center font-bold">3</span><span>(권장) 함수 목록에서 <b>testSetup</b>을 한 번 실행해 권한을 승인합니다. ‘테스트 학생’ 시트가 생기면 정상입니다.</span></li>
+        <li class="flex gap-3"><span class="shrink-0 w-7 h-7 rounded-full bg-brand text-white grid place-items-center font-bold">4</span><span><b>배포 → 새 배포</b>에서 유형을 <b>웹 앱</b>으로 고르고, 실행 사용자는 <b>나</b>, 액세스 권한은 <b>모든 사용자</b>로 지정한 뒤 배포합니다.</span></li>
+        <li class="flex gap-3"><span class="shrink-0 w-7 h-7 rounded-full bg-brand text-white grid place-items-center font-bold">5</span><span><b>/exec</b>로 끝나는 웹 앱 URL을 복사해 설정의 ‘구글 스프레드시트 연동’ 칸에 붙여넣고 저장합니다.</span></li>
+      </ol>
+      <div class="rounded-2xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-900 leading-relaxed">
+        코드를 수정했다면 <b>배포 → 배포 관리 → 수정(연필) → 버전: 새 버전</b>으로 다시 배포해야 반영됩니다. 웹 앱 URL을 아는 사람은 누구나 시트에 기록을 추가할 수 있으므로 URL을 공개된 곳에 올리지 마세요.
+      </div>
+      <div>
+        <div class="flex items-center mb-2">
+          <h3 class="font-bold flex-1">Code.gs</h3>
+          <button id="copyGasBtn" class="h-10 px-4 rounded-xl bg-brand text-white text-sm font-semibold">코드 복사</button>
+        </div>
+        <div class="rounded-2xl bg-slate-900 text-slate-100 overflow-x-auto">
+          <pre class="code p-4 text-xs leading-relaxed"><code id="gasCodeView"></code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 확인 모달 (alert/confirm 대체) ================= -->
+<div id="confirmModal" class="modal fixed inset-0 bg-black/50 items-center justify-center p-4" style="z-index:60" data-backdrop>
+  <div class="modal-panel bg-white w-full max-w-sm rounded-3xl p-6">
+    <h2 id="confirmTitle" class="text-lg font-bold mb-2"></h2>
+    <p id="confirmMsg" class="text-sm text-slate-600 leading-relaxed mb-6 whitespace-pre-line"></p>
+    <div class="flex gap-2">
+      <button class="flex-1 h-12 rounded-xl border-2 border-line font-semibold" data-close="confirmModal">취소</button>
+      <button id="confirmOk" class="flex-1 h-12 rounded-xl bg-strong text-white font-semibold">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 구글 앱스 스크립트 원본 (가이드 모달에 표시) ================= -->
+<script type="text/plain" id="gasTemplate">/**
+ * ABA 행동 관찰 기록기 - 구글 스프레드시트 수신 스크립트
+ * 스프레드시트 > 확장 프로그램 > Apps Script 에 붙여넣고 웹 앱으로 배포하세요.
+ */
+var HEADERS = ['학생명', '표적행동', '타임스탬프', '강도'];
+
+function doPost(e) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000); // 동시에 여러 기록이 들어와도 행이 겹치지 않도록 잠금
+
+    if (!e || !e.postData || !e.postData.contents) {
+      return respond_({ result: 'error', message: '전송된 데이터가 없습니다.' });
+    }
+
+    var payload = JSON.parse(e.postData.contents);
+    var records = Array.isArray(payload.records) ? payload.records : [payload];
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var saved = 0;
+
+    records.forEach(function (r) {
+      if (!r || !r.student) return;
+      var sheet = getOrCreateSheet_(ss, String(r.student));
+      sheet.appendRow([
+        String(r.student),
+        String(r.behavior || ''),
+        String(r.timestamp || ''),
+        Number(r.intensity) || ''
+      ]);
+      // 타임스탬프 표시 형식 고정 (YYYY-MM-DD HH:mm:ss)
+      sheet.getRange(sheet.getLastRow(), 3).setNumberFormat('yyyy-mm-dd hh:mm:ss');
+      saved++;
+    });
+
+    return respond_({ result: 'success', saved: saved });
+  } catch (err) {
+    return respond_({ result: 'error', message: String(err) });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** 학생 이름의 시트가 없으면 만들고, 1행에 굵은 헤더를 넣습니다. */
+function getOrCreateSheet_(ss, studentName) {
+  // 시트 이름에 쓸 수 없는 문자 [ ] * ? / \ : 는 _ 로 바꾸고 100자로 제한
+  var name = studentName.replace(/[\[\]\*\?\/\\:]/g, '_').trim().substring(0, 100) || '이름없음';
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+/** 브라우저에서 웹 앱 URL을 직접 열었을 때 작동 여부를 보여줍니다. */
+function doGet() {
+  return ContentService.createTextOutput('ABA 관찰 기록 수신 스크립트가 정상 작동 중입니다.');
+}
+
+function respond_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/** 편집기에서 한 번 실행해 권한을 승인하고 동작을 확인하는 테스트 함수 */
+function testSetup() {
+  var res = doPost({
+    postData: {
+      contents: JSON.stringify({
+        records: [{ student: '테스트 학생', behavior: '연결 확인', timestamp: '2026-01-01 09:00:00', intensity: 1 }]
+      })
+    }
+  });
+  Logger.log(res.getContent());
+}
+</script>
+
+<!-- ================= 앱 로직 ================= -->
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- 유틸 ---------- */
+  const KEY = 'aba-observer-v1';
+  const $ = (id) => document.getElementById(id);
+  const pad = (n) => String(n).padStart(2, '0');
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const dateOnly = (d) => fmt(d).slice(0, 10);
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const LEVEL = {
+    1: { label: '약', color: '#22C55E', badge: 'bg-green-100 text-green-800' },
+    2: { label: '중', color: '#FB8C24', badge: 'bg-orange-100 text-orange-800' },
+    3: { label: '강', color: '#F43F5E', badge: 'bg-rose-100 text-rose-800' }
+  };
+  const lv = (n) => LEVEL[Number(n)] || LEVEL[1];
+
+  /* ---------- 상태 & 저장 ---------- */
+  const defaults = () => ({
+    students: [{ id: uid(), name: '예시 학생', behaviors: ['자리 이탈', '소리 지르기', '물건 던지기'] }],
+    logs: [],
+    gasUrl: '',
+    sound: true,
+    sel: { studentId: '', behavior: '' }
+  });
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        return Object.assign(defaults(), s, { sel: Object.assign({ studentId: '', behavior: '' }, s.sel || {}) });
+      }
+    } catch (e) { /* 저장소를 쓸 수 없으면 기본값 */ }
+    return defaults();
+  }
+
+  let storageWarned = false;
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(state));
+    } catch (e) {
+      if (!storageWarned) {
+        storageWarned = true;
+        toast('기기에 저장하지 못했습니다', 'error', { sub: '브라우저 저장 공간을 확인하고 CSV로 백업해 주세요.' });
+      }
+    }
+  }
+
+  let state = load();
+  const currentStudent = () => state.students.find((s) => s.id === state.sel.studentId) || null;
+
+  /* ---------- 토스트 ---------- */
+  function toast(title, type = 'info', opts = {}) {
+    const area = $('toastArea');
+    const bg = opts.bg || { success: '#22C55E', warn: '#F59E0B', error: '#F43F5E', info: '#3B5BDB' }[type] || '#3B5BDB';
+    const el = document.createElement('div');
+    el.className = 'toast pointer-events-auto w-full max-w-md rounded-2xl text-white px-4 py-3 shadow-xl';
+    el.style.background = bg;
+    el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    el.innerHTML = `<div class="font-bold leading-snug"></div>${opts.sub ? '<div class="text-sm opacity-90 mt-0.5 leading-snug"></div>' : ''}`;
+    el.children[0].textContent = title;
+    if (opts.sub) el.children[1].textContent = opts.sub;
+    area.appendChild(el);
+    while (area.children.length > 3) area.removeChild(area.firstChild);
+    setTimeout(() => {
+      el.classList.add('out');
+      setTimeout(() => el.remove(), 220);
+    }, opts.duration || 2200);
+  }
+
+  /* ---------- 모달 ---------- */
+  let confirmResolve = null;
+
+  function openModal(id) {
+    $(id).classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeModal(id) {
+    $(id).classList.remove('open');
+    if (id === 'confirmModal' && confirmResolve) {
+      const r = confirmResolve; confirmResolve = null; r(false);
+    }
+    if (!document.querySelector('.modal.open')) document.body.style.overflow = '';
+  }
+  function confirmDialog(title, message, okLabel = '삭제') {
+    return new Promise((resolve) => {
+      confirmResolve = resolve;
+      $('confirmTitle').textContent = title;
+      $('confirmMsg').textContent = message;
+      $('confirmOk').textContent = okLabel;
+      openModal('confirmModal');
+      setTimeout(() => $('confirmOk').focus(), 50);
+    });
+  }
+  $('confirmOk').addEventListener('click', () => {
+    const r = confirmResolve; confirmResolve = null;
+    closeModal('confirmModal');
+    if (r) r(true);
+  });
+
+  document.addEventListener('click', (e) => {
+    const c = e.target.closest('[data-close]');
+    if (c) closeModal(c.dataset.close);
+  });
+  document.querySelectorAll('[data-backdrop]').forEach((m) => {
+    m.addEventListener('click', (e) => { if (e.target === m) closeModal(m.id); });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const open = [...document.querySelectorAll('.modal.open')];
+    if (open.length) closeModal(open.find((m) => m.id === 'confirmModal') ? 'confirmModal' : open[open.length - 1].id);
+  });
+
+  /* ---------- 사운드 & 진동 ---------- */
+  let synth = null;
+  async function ensureAudio() {
+    if (typeof Tone === 'undefined') return false;
+    if (!synth) {
+      await Tone.start();
+      synth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'triangle' },
+        envelope: { attack: 0.005, decay: 0.12, sustain: 0.15, release: 0.25 }
+      }).toDestination();
+      synth.volume.value = -6;
+    }
+    return true;
+  }
+  async function playSound(level) {
+    if (!state.sound) return;
+    try {
+      if (!(await ensureAudio())) return;
+      const t = Tone.now();
+      if (level === 1) {
+        synth.triggerAttackRelease('C5', '16n', t);
+      } else if (level === 2) {
+        synth.triggerAttackRelease('E5', '16n', t);
+        synth.triggerAttackRelease('A5', '16n', t + 0.11);
+      } else {
+        synth.triggerAttackRelease('A5', '16n', t);
+        synth.triggerAttackRelease('A5', '16n', t + 0.11);
+        synth.triggerAttackRelease('E6', '8n', t + 0.22);
+      }
+    } catch (e) { /* 소리 재생 실패는 기록에 영향 없음 */ }
+  }
+  function vibrate(level) {
+    if (navigator.vibrate) navigator.vibrate([[30], [30, 50, 30], [60, 40, 60, 40, 60]][level - 1]);
+  }
+  function renderSoundBtn() {
+    $('soundBtn').textContent = state.sound ? '🔊' : '🔇';
+    $('soundBtn').setAttribute('aria-pressed', String(state.sound));
+  }
+  $('soundBtn').addEventListener('click', () => {
+    state.sound = !state.sound;
+    save(); renderSoundBtn();
+    if (state.sound) { playSound(1); toast('효과음을 켰습니다'); }
+    else toast('효과음을 껐습니다');
+  });
+
+  /* ---------- 메인 드롭다운 ---------- */
+  function renderSelectors() {
+    const sSel = $('studentSelect');
+    const bSel = $('behaviorSelect');
+    if (!currentStudent()) state.sel.studentId = '';
+
+    sSel.innerHTML = state.students.length
+      ? '<option value="">학생을 선택하세요</option>' + state.students.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')
+      : '<option value="">설정에서 학생을 추가하세요</option>';
+    sSel.value = state.sel.studentId;
+
+    const st = currentStudent();
+    if (!st) {
+      bSel.innerHTML = '<option value="">먼저 학생을 선택하세요</option>';
+      bSel.disabled = true;
+      state.sel.behavior = '';
+    } else if (!st.behaviors.length) {
+      bSel.innerHTML = '<option value="">등록된 표적행동이 없습니다</option>';
+      bSel.disabled = true;
+      state.sel.behavior = '';
+    } else {
+      if (!st.behaviors.includes(state.sel.behavior)) state.sel.behavior = st.behaviors.length === 1 ? st.behaviors[0] : '';
+      bSel.disabled = false;
+      bSel.innerHTML = '<option value="">표적행동을 선택하세요</option>' + st.behaviors.map((b) => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+      bSel.value = state.sel.behavior;
+    }
+    renderRecordState();
+  }
+
+  function renderRecordState() {
+    const st = currentStudent();
+    const ready = !!(st && state.sel.behavior);
+    document.querySelectorAll('.rec-btn').forEach((b) => b.classList.toggle('is-locked', !ready));
+
+    const today = dateOnly(new Date());
+    const counts = { 1: 0, 2: 0, 3: 0 };
+    let last = null;
+    if (ready) {
+      state.logs.forEach((l) => {
+        if (l.student === st.name && l.behavior === state.sel.behavior && l.timestamp.startsWith(today)) {
+          counts[l.intensity] = (counts[l.intensity] || 0) + 1;
+          last = l;
+        }
+      });
+    }
+    [1, 2, 3].forEach((n) => { document.querySelector(`[data-today="${n}"]`).textContent = `오늘 ${counts[n]}회`; });
+
+    const hint = $('recordHint');
+    if (!st) hint.textContent = '학생을 선택하면 해당 학생의 표적행동이 표시됩니다.';
+    else if (!st.behaviors.length) hint.textContent = '설정(톱니바퀴)에서 이 학생의 표적행동을 먼저 등록해 주세요.';
+    else if (!state.sel.behavior) hint.textContent = '표적행동을 선택한 뒤, 행동이 나타나면 강도 버튼을 누르세요.';
+    else if (last) hint.textContent = `오늘 총 ${counts[1] + counts[2] + counts[3]}회 · 마지막 기록 ${last.timestamp.slice(11)} (${lv(last.intensity).label})`;
+    else hint.textContent = '오늘 아직 기록이 없습니다. 행동이 나타나면 바로 눌러 주세요.';
+  }
+
+  $('studentSelect').addEventListener('change', (e) => {
+    state.sel.studentId = e.target.value;
+    state.sel.behavior = '';
+    save(); renderSelectors();
+  });
+  $('behaviorSelect').addEventListener('change', (e) => {
+    state.sel.behavior = e.target.value;
+    save(); renderRecordState();
+  });
+
+  /* ---------- 원터치 기록 ---------- */
+  function record(level, btn) {
+    const st = currentStudent();
+    if (!st) { toast('학생을 먼저 선택해 주세요', 'warn'); return; }
+    if (!state.sel.behavior) { toast('표적행동을 먼저 선택해 주세요', 'warn'); return; }
+
+    const log = {
+      id: uid(),
+      student: st.name,
+      behavior: state.sel.behavior,
+      timestamp: fmt(new Date()),
+      intensity: level,
+      sync: state.gasUrl ? 'pending' : 'none'
+    };
+    state.logs.push(log);
+    save();
+
+    playSound(level);
+    vibrate(level);
+    btn.classList.remove('flash'); void btn.offsetWidth; btn.classList.add('flash');
+    toast(`${lv(level).label} (${level}점) 기록됨`, 'info', { bg: lv(level).color, sub: `${log.student} · ${log.behavior} · ${log.timestamp.slice(11)}` });
+
+    renderRecordState(); renderStatsFilter(); renderCharts(); renderLog(); renderSyncBadge();
+    if (state.gasUrl) sendToGas([log]);
+  }
+  document.querySelectorAll('.rec-btn').forEach((btn) => {
+    btn.addEventListener('click', () => record(Number(btn.dataset.level), btn));
+  });
+
+  /* ---------- 구글 시트 전송 ---------- */
+  function setSync(ids, status) {
+    const set = new Set(ids);
+    state.logs.forEach((l) => { if (set.has(l.id)) l.sync = status; });
+  }
+
+  async function sendToGas(logs, { silent = false } = {}) {
+    if (!state.gasUrl || !logs.length) return false;
+    const ids = logs.map((l) => l.id);
+    setSync(ids, 'pending');
+    try {
+      // text/plain 으로 보내면 CORS 사전 요청 없이 Apps Script로 전달됩니다.
+      // no-cors 모드에서는 응답 내용을 읽을 수 없으므로 '전송 완료'는 요청이 전달되었다는 뜻입니다.
+      await fetch(state.gasUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          records: logs.map((l) => ({ student: l.student, behavior: l.behavior, timestamp: l.timestamp, intensity: l.intensity }))
+        })
+      });
+      setSync(ids, 'sent');
+      return true;
+    } catch (e) {
+      setSync(ids, 'failed');
+      if (!silent) toast('구글 시트로 보내지 못했습니다', 'error', { sub: '네트워크 연결을 확인해 주세요. 설정에서 다시 보낼 수 있습니다.', duration: 3500 });
+      return false;
+    } finally {
+      save(); renderLog(); renderSyncBadge(); renderRetryBtn();
+    }
+  }
+
+  const unsentLogs = () => state.logs.filter((l) => l.sync === 'failed' || l.sync === 'pending');
+
+  function renderSyncBadge() {
+    const b = $('syncBadge');
+    if (!state.gasUrl) { b.textContent = '시트 연동 꺼짐 · 이 기기에만 저장'; return; }
+    const n = state.logs.filter((l) => l.sync === 'failed').length;
+    b.textContent = n ? `⚠ 시트 미전송 ${n}건 · 설정에서 다시 보내기` : '● 구글 시트 자동 전송 중';
+  }
+
+  function renderRetryBtn() {
+    const n = unsentLogs().length;
+    const btn = $('retryBtn');
+    btn.classList.toggle('hidden', !(state.gasUrl && n));
+    btn.textContent = `미전송 ${n}건 다시 보내기`;
+  }
+
+  window.addEventListener('online', async () => {
+    const list = state.logs.filter((l) => l.sync === 'failed');
+    if (state.gasUrl && list.length && (await sendToGas(list, { silent: true }))) {
+      toast(`미전송 기록 ${list.length}건을 시트로 보냈습니다`, 'success');
+    }
+  });
+
+  /* ---------- 통계 ---------- */
+  function renderStatsFilter() {
+    const sel = $('statsStudent');
+    const prev = sel.value;
+    const names = [...new Set([...state.students.map((s) => s.name), ...state.logs.map((l) => l.student)])];
+    sel.innerHTML = '<option value="">전체 학생</option>' + names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    sel.value = names.includes(prev) ? prev : '';
+  }
+
+  function statsLogs() {
+    const who = $('statsStudent').value;
+    const period = $('statsPeriod').value;
+    const now = new Date();
+    let from = '';
+    if (period === 'today') from = dateOnly(now);
+    if (period === '7d') { const d = new Date(now); d.setDate(d.getDate() - 6); from = dateOnly(d); }
+    return state.logs.filter((l) => (!who || l.student === who) && (!from || l.timestamp.slice(0, 10) >= from));
+  }
+
+  let hourChart = null;
+  let intensityChart = null;
+
+  function renderCharts() {
+    const logs = statsLogs();
+    const hours = Array(24).fill(0);
+    const lvCount = { 1: 0, 2: 0, 3: 0 };
+    let sum = 0;
+    logs.forEach((l) => {
+      const h = parseInt(l.timestamp.slice(11, 13), 10);
+      if (h >= 0 && h < 24) hours[h]++;
+      lvCount[l.intensity] = (lvCount[l.intensity] || 0) + 1;
+      sum += Number(l.intensity) || 0;
+    });
+    const total = logs.length;
+
+    $('statsSummary').textContent = total
+      ? `총 ${total}회 · 평균 강도 ${(sum / total).toFixed(2)}점`
+      : '선택한 조건에 해당하는 기록이 없습니다.';
+    $('donutTotal').textContent = total;
+    $('intensityBadges').innerHTML = [1, 2, 3].map((n) => `
+      <div class="rounded-2xl border-2 p-2 text-center" style="border-color:${lv(n).color}">
+        <div class="text-sm font-bold" style="color:${lv(n).color}">${lv(n).label} ${n}점</div>
+        <div class="text-xl font-bold tabular">${lvCount[n]}</div>
+        <div class="text-xs text-slate-500 tabular">${total ? Math.round((lvCount[n] / total) * 100) : 0}%</div>
+      </div>`).join('');
+
+    if (typeof Chart === 'undefined') {
+      const err = $('chartError');
+      err.textContent = '그래프 라이브러리(Chart.js)를 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해 주세요.';
+      err.classList.remove('hidden');
+      return;
+    }
+
+    if (!hourChart) {
+      Chart.defaults.font.family = '"IBM Plex Sans KR", sans-serif';
+      Chart.defaults.color = '#5B6676';
+      hourChart = new Chart($('hourChart'), {
+        type: 'bar',
+        data: {
+          labels: hours.map((_, i) => `${pad(i)}시`),
+          datasets: [{ label: '발생 횟수', data: hours, backgroundColor: '#5C7CFA', hoverBackgroundColor: '#3B5BDB', borderRadius: 6, maxBarThickness: 28 }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 250 },
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { title: (items) => `${items[0].label} ~ ${pad((items[0].dataIndex + 1) % 24)}시`, label: (c) => `${c.parsed.y}회` } }
+          },
+          scales: {
+            y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#EEF2FB' } },
+            x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 6 } }
+          }
+        }
+      });
+    } else {
+      hourChart.data.datasets[0].data = hours;
+      hourChart.update();
+    }
+
+    const donutData = total ? [lvCount[1], lvCount[2], lvCount[3]] : [1];
+    const donutColors = total ? [LEVEL[1].color, LEVEL[2].color, LEVEL[3].color] : ['#E3E8EF'];
+    const donutLabels = total ? ['약 (1점)', '중 (2점)', '강 (3점)'] : ['기록 없음'];
+    if (!intensityChart) {
+      intensityChart = new Chart($('intensityChart'), {
+        type: 'doughnut',
+        data: { labels: donutLabels, datasets: [{ data: donutData, backgroundColor: donutColors, borderWidth: 3, borderColor: '#fff' }] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '68%',
+          animation: { duration: 250 },
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: total > 0, callbacks: { label: (c) => ` ${c.label}: ${c.parsed}회` } }
+          }
+        }
+      });
+    } else {
+      intensityChart.data.labels = donutLabels;
+      intensityChart.data.datasets[0].data = donutData;
+      intensityChart.data.datasets[0].backgroundColor = donutColors;
+      intensityChart.options.plugins.tooltip.enabled = total > 0;
+      intensityChart.update();
+    }
+  }
+  $('statsStudent').addEventListener('change', renderCharts);
+  $('statsPeriod').addEventListener('change', renderCharts);
+
+  /* ---------- 관찰 로그 ---------- */
+  const SYNC_LABEL = {
+    none: '<span class="text-slate-300" title="연동하지 않음">—</span>',
+    pending: '<span class="text-slate-500">전송 중</span>',
+    sent: '<span class="text-green-700 font-semibold">전송됨</span>',
+    failed: '<span class="text-strong font-semibold">실패</span>'
+  };
+
+  function renderLog() {
+    const q = $('searchInput').value.trim().toLowerCase();
+    const rows = state.logs.slice().reverse().filter((l) =>
+      !q || `${l.student} ${l.behavior} ${l.timestamp} ${lv(l.intensity).label} ${l.intensity}점`.toLowerCase().includes(q)
+    );
+    const LIMIT = 300;
+    $('logCount').textContent = q
+      ? `검색 결과 ${rows.length}건 / 전체 ${state.logs.length}건`
+      : `전체 ${state.logs.length}건${rows.length > LIMIT ? ` · 최근 ${LIMIT}건 표시` : ''}`;
+
+    const body = $('logBody');
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="6" class="py-10 text-center text-slate-400">${state.logs.length ? '검색 결과가 없습니다.' : '아직 기록이 없습니다. 위의 강도 버튼으로 첫 기록을 남겨 보세요.'}</td></tr>`;
+      return;
+    }
+    body.innerHTML = rows.slice(0, LIMIT).map((l) => `
+      <tr class="border-b border-slate-100">
+        <td class="py-2.5 px-3 whitespace-nowrap tabular">
+          <div class="text-xs text-slate-400">${esc(l.timestamp.slice(0, 10))}</div>
+          <div class="font-semibold">${esc(l.timestamp.slice(11))}</div>
+        </td>
+        <td class="py-2.5 px-3 font-semibold">${esc(l.student)}</td>
+        <td class="py-2.5 px-3">${esc(l.behavior)}</td>
+        <td class="py-2.5 px-3 whitespace-nowrap"><span class="inline-block px-2.5 py-1 rounded-full text-xs font-bold ${lv(l.intensity).badge}">${lv(l.intensity).label} ${Number(l.intensity)}점</span></td>
+        <td class="py-2.5 px-3 whitespace-nowrap text-xs">${SYNC_LABEL[l.sync] || SYNC_LABEL.none}</td>
+        <td class="py-2.5 px-3 text-right"><button data-del="${esc(l.id)}" class="h-9 px-3 rounded-lg text-strong hover:bg-rose-50 font-semibold">삭제</button></td>
+      </tr>`).join('');
+  }
+  $('searchInput').addEventListener('input', renderLog);
+
+  $('logBody').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-del]');
+    if (!btn) return;
+    const log = state.logs.find((l) => l.id === btn.dataset.del);
+    if (!log) return;
+    const extra = log.sync === 'sent' ? '\n\n이미 구글 시트로 전송된 기록은 시트에서 따로 삭제해야 합니다.' : '';
+    const ok = await confirmDialog('기록을 삭제할까요?', `${log.timestamp} · ${log.student} · ${log.behavior} · ${lv(log.intensity).label}(${log.intensity}점)${extra}`);
+    if (!ok) return;
+    state.logs = state.logs.filter((l) => l.id !== log.id);
+    save(); refreshAll();
+    toast('기록을 삭제했습니다');
+  });
+
+  /* ---------- CSV 내보내기 (UTF-8 BOM) ---------- */
+  $('csvBtn').addEventListener('click', () => {
+    if (!state.logs.length) { toast('내보낼 기록이 없습니다', 'warn'); return; }
+    const cell = (v) => {
+      let s = String(v ?? '');
+      if (/^[=+\-@]/.test(s)) s = "'" + s; // 엑셀 수식 실행 방지
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const rows = [['학생명', '표적행동', '타임스탬프', '강도']]
+      .concat(state.logs.map((l) => [l.student, l.behavior, l.timestamp, l.intensity]));
+    const csv = '\uFEFF' + rows.map((r) => r.map(cell).join(',')).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ABA_관찰기록_${fmt(new Date()).replace(/[-: ]/g, '').replace(/^(\d{8})/, '$1_')}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`CSV 파일을 내려받았습니다 (${state.logs.length}건)`, 'success');
+  });
+
+  /* ---------- 설정: 학생 & 표적행동 ---------- */
+  function renderSettings() {
+    const wrap = $('studentList');
+    if (!state.students.length) {
+      wrap.innerHTML = '<p class="text-sm text-slate-400 py-6 text-center border-2 border-dashed border-line rounded-2xl">등록된 학생이 없습니다. 위에서 학생을 추가해 주세요.</p>';
+    } else {
+      wrap.innerHTML = state.students.map((s) => `
+        <div class="rounded-2xl border-2 border-line p-4" data-sid="${esc(s.id)}">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="font-bold text-base flex-1 min-w-0 truncate">${esc(s.name)}</span>
+            <span class="text-xs text-slate-400 tabular">표적행동 ${s.behaviors.length}개</span>
+            <button data-act="del-student" class="h-9 px-3 rounded-lg text-strong hover:bg-rose-50 text-sm font-semibold">학생 삭제</button>
+          </div>
+          <div class="flex flex-wrap gap-2 mb-3">
+            ${s.behaviors.length
+              ? s.behaviors.map((b, i) => `
+                <span class="inline-flex items-center gap-1 pl-3 pr-1 py-1 rounded-full bg-slate-100 text-ink text-sm font-medium">
+                  ${esc(b)}
+                  <button data-act="del-beh" data-idx="${i}" class="w-7 h-7 rounded-full hover:bg-slate-300 grid place-items-center text-lg leading-none" aria-label="${esc(b)} 삭제">×</button>
+                </span>`).join('')
+              : '<span class="text-sm text-slate-400">아직 표적행동이 없습니다.</span>'}
+          </div>
+          <div class="flex gap-2">
+            <input data-role="beh-input" maxlength="40" placeholder="표적행동 입력 (예: 자리 이탈)" class="flex-1 min-w-0 h-11 rounded-xl border-2 border-line px-3 text-sm">
+            <button data-act="add-beh" class="h-11 px-4 rounded-xl bg-slate-200 hover:bg-slate-300 text-sm font-semibold whitespace-nowrap">추가</button>
+          </div>
+        </div>`).join('');
+    }
+    $('gasUrlInput').value = state.gasUrl;
+    renderRetryBtn();
+  }
+
+  function addStudent() {
+    const input = $('newStudentInput');
+    const name = input.value.trim();
+    if (!name) { toast('학생 이름을 입력해 주세요', 'warn'); input.focus(); return; }
+    if (state.students.some((s) => s.name === name)) { toast('이미 등록된 이름입니다', 'warn', { sub: '같은 이름이면 구분할 수 있게 바꿔 주세요. (예: 김민준A)' }); return; }
+    const st = { id: uid(), name, behaviors: [] };
+    state.students.push(st);
+    if (!state.sel.studentId) state.sel.studentId = st.id;
+    input.value = '';
+    save(); refreshAll();
+    toast(`${name} 학생을 추가했습니다`, 'success');
+    const newInput = document.querySelector(`[data-sid="${st.id}"] [data-role="beh-input"]`);
+    if (newInput) newInput.focus();
+  }
+  $('addStudentBtn').addEventListener('click', addStudent);
+  $('newStudentInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) addStudent(); });
+
+  function addBehavior(sid) {
+    const st = state.students.find((s) => s.id === sid);
+    const input = document.querySelector(`[data-sid="${sid}"] [data-role="beh-input"]`);
+    if (!st || !input) return;
+    const b = input.value.trim();
+    if (!b) { toast('표적행동을 입력해 주세요', 'warn'); input.focus(); return; }
+    if (st.behaviors.includes(b)) { toast('이미 등록된 표적행동입니다', 'warn'); return; }
+    st.behaviors.push(b);
+    save(); refreshAll();
+    toast(`‘${b}’ 추가됨`, 'success', { sub: st.name });
+    const again = document.querySelector(`[data-sid="${sid}"] [data-role="beh-input"]`);
+    if (again) again.focus();
+  }
+
+  $('studentList').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const sid = btn.closest('[data-sid]').dataset.sid;
+    const st = state.students.find((s) => s.id === sid);
+    if (!st) return;
+
+    if (btn.dataset.act === 'add-beh') addBehavior(sid);
+
+    if (btn.dataset.act === 'del-beh') {
+      const b = st.behaviors[Number(btn.dataset.idx)];
+      st.behaviors.splice(Number(btn.dataset.idx), 1);
+      if (state.sel.studentId === sid && state.sel.behavior === b) state.sel.behavior = '';
+      save(); refreshAll();
+      toast(`‘${b}’ 삭제됨`, 'info', { sub: '이미 남긴 관찰 기록은 유지됩니다.' });
+    }
+
+    if (btn.dataset.act === 'del-student') {
+      const ok = await confirmDialog(`${st.name} 학생을 삭제할까요?`, '등록된 표적행동도 함께 삭제됩니다.\n이미 남긴 관찰 기록은 로그와 통계에 그대로 유지됩니다.');
+      if (!ok) return;
+      state.students = state.students.filter((s) => s.id !== sid);
+      if (state.sel.studentId === sid) state.sel = { studentId: '', behavior: '' };
+      save(); refreshAll();
+      toast(`${st.name} 학생을 삭제했습니다`);
+    }
+  });
+  $('studentList').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing && e.target.matches('[data-role="beh-input"]')) {
+      addBehavior(e.target.closest('[data-sid]').dataset.sid);
+    }
+  });
+
+  /* ---------- 설정: 구글 시트 URL ---------- */
+  $('saveGasBtn').addEventListener('click', () => {
+    const url = $('gasUrlInput').value.trim();
+    if (!url) { toast('웹 앱 URL을 입력해 주세요', 'warn'); return; }
+    if (!/^https:\/\/script\.google\.com\/.+/.test(url)) {
+      toast('Apps Script 웹 앱 주소가 아닌 것 같습니다', 'warn', { sub: 'https://script.google.com/macros/s/…/exec 형식인지 확인해 주세요.', duration: 3500 });
+      return;
+    }
+    if (!/\/exec(\?.*)?$/.test(url)) {
+      toast('URL이 /exec 로 끝나는지 확인해 주세요', 'warn', { sub: '/dev 주소는 편집자 본인만 쓸 수 있는 테스트용입니다.', duration: 3500 });
+    }
+    state.gasUrl = url;
+    save(); renderSyncBadge(); renderRetryBtn();
+    toast('시트 연동 URL을 저장했습니다', 'success', { sub: '이제부터 기록이 시트로 자동 전송됩니다.' });
+  });
+
+  $('testGasBtn').addEventListener('click', () => {
+    const url = $('gasUrlInput').value.trim() || state.gasUrl;
+    if (!url) { toast('먼저 웹 앱 URL을 입력해 주세요', 'warn'); return; }
+    window.open(url, '_blank', 'noopener');
+    toast('새 탭에서 작동 메시지가 보이면 정상입니다', 'info', { duration: 3500 });
+  });
+
+  $('clearGasBtn').addEventListener('click', async () => {
+    if (!state.gasUrl) { toast('연동된 URL이 없습니다'); return; }
+    const ok = await confirmDialog('시트 연동을 해제할까요?', '이후 기록은 이 기기에만 저장됩니다. 이미 시트에 보낸 데이터는 그대로 남습니다.', '해제');
+    if (!ok) return;
+    state.gasUrl = '';
+    $('gasUrlInput').value = '';
+    save(); renderSyncBadge(); renderRetryBtn();
+    toast('시트 연동을 해제했습니다');
+  });
+
+  $('retryBtn').addEventListener('click', async () => {
+    const list = unsentLogs();
+    if (!list.length) return;
+    if (await sendToGas(list)) toast(`${list.length}건을 시트로 보냈습니다`, 'success');
+  });
+
+  $('clearLogsBtn').addEventListener('click', async () => {
+    if (!state.logs.length) { toast('삭제할 기록이 없습니다'); return; }
+    const ok = await confirmDialog('모든 관찰 기록을 삭제할까요?', `이 기기의 기록 ${state.logs.length}건이 삭제되며 되돌릴 수 없습니다.\n필요하다면 먼저 CSV로 내려받아 두세요.`, '모두 삭제');
+    if (!ok) return;
+    state.logs = [];
+    save(); refreshAll();
+    toast('모든 관찰 기록을 삭제했습니다');
+  });
+
+  /* ---------- 가이드 모달 ---------- */
+  const gasCode = $('gasTemplate').textContent.trim();
+  $('gasCodeView').textContent = gasCode;
+
+  $('copyGasBtn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(gasCode);
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = gasCode;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (_) { /* 무시 */ }
+      ta.remove();
+    }
+    toast('코드를 복사했습니다', 'success', { sub: 'Apps Script 편집기에 붙여넣어 주세요.' });
+  });
+
+  $('settingsBtn').addEventListener('click', () => { renderSettings(); openModal('settingsModal'); });
+  $('guideBtn').addEventListener('click', () => openModal('guideModal'));
+  $('openGuideFromSettings').addEventListener('click', () => openModal('guideModal'));
+
+  /* ---------- 전체 갱신 ---------- */
+  function refreshAll() {
+    renderSelectors();
+    renderStatsFilter();
+    renderCharts();
+    renderLog();
+    renderSyncBadge();
+    if ($('settingsModal').classList.contains('open')) renderSettings();
+  }
+
+  renderSoundBtn();
+  refreshAll();
+})();
+</script>
+</body>
+</html>
